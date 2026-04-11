@@ -1,0 +1,5 @@
+CACHE_DIR = "/fs/nexus-scratch/snawathe/hf_home/"
+NLTK_CACHE_DIR = "<REDACTED>"
+OPENAI_API_KEY = "<REDACTED>"
+GEMINI_API_KEY = "<REDACTED>"
+RESULTS_DIR = "/cmlscratch/snawathe/cmsc828g-proj/results/"
