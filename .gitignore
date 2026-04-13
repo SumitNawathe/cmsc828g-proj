@@ -5,3 +5,6 @@ results_copy/
 results_copy2/
 .vscode/
 __pycache__/
+rollouts/
+CLAUDE.md
+references/
