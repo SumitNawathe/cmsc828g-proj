@@ -1,0 +1,14 @@
+# Generated result files (large PNGs/PDFs and raw JSON)
+results/*.png
+results/*.pdf
+results/*.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtual environments
+venv/
+.env
