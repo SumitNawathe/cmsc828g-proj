@@ -2,46 +2,39 @@ import os
 import argparse
 import json
 import time
-from vllm import LLM, SamplingParams, RequestOutput
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
 from typing import Any
 
 from env_vars import RESULTS_DIR
-from model_loader import get_model_and_tokenizer, MODEL_REGISTRY
-from dataset_loader import get_dataset, DATASET_REGISTRY
+from simulation.model_loader_hf import get_model_and_tokenizer, MODEL_REGISTRY
+from simulation.dataset_loader import get_dataset, DATASET_REGISTRY
 
 
-def basic_inference(model: LLM, sampling_params: SamplingParams, sample: dict[str, Any]) -> tuple[RequestOutput, float]:
+def basic_inference(model: AutoModelForCausalLM, tokenizer: AutoTokenizer, sample: dict[str, Any], B: int, G: int) -> dict[str, Any]:
     messages = [
         {"role": "user", "content": f"Please think step by step, and provide your answer in \\boxed{{}}. Question: {sample['question']}"}
     ]
-    
-    model_name = getattr(model.llm_engine.model_config, 'model', '')
-    start_time = time.perf_counter()
-    if "qwen3" in model_name.lower():
-        outputs = model.chat([messages], sampling_params, chat_template_kwargs={'enable_thinking': True})
-    else:
-        outputs = model.chat([messages], sampling_params)
-    elapsed_time = time.perf_counter() - start_time
-    return outputs[0], elapsed_time
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer.encode(prompt, return_tensors='pt').to(model.device)
 
-def serialize_request_output(output: RequestOutput) -> dict:
+    with torch.no_grad():
+        start_time = time.perf_counter()
+        outputs = model.generate(
+            inputs,
+            max_length=B,
+            num_return_sequences=G,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+        elapsed_time = time.perf_counter() - start_time
+    
+    decoded_outputs = [tokenizer.decode(output, skip_special_tokens=True) for output in outputs]
+    output_token_lengths = [len(output) for output in outputs]
     return {
-        'request_id': output.request_id,
-        'prompt': output.prompt,
-        'prompt_token_ids': output.prompt_token_ids,
-        'prompt_logprobs': output.prompt_logprobs,
-        'outputs': [
-            {
-                'index': o.index,
-                'text': o.text,
-                'token_ids': list(o.token_ids),
-                'cumulative_logprob': o.cumulative_logprob,
-                'logprobs': o.logprobs,
-                'finish_reason': o.finish_reason,
-                'stop_reason': o.stop_reason
-            } for o in output.outputs
-        ],
-        'finished': output.finished,
+        "decoded_outputs": decoded_outputs,
+        "output_token_lengths": output_token_lengths,
+        "elapsed_time": elapsed_time,
     }
 
 
@@ -104,8 +97,7 @@ def main():
 
     # Load model
     print(f"Loading model: {args.model}...")
-    model, sampling_params = get_model_and_tokenizer(args.model, device="auto", max_model_len=B)
-    sampling_params.n = G
+    model, tokenizer = get_model_and_tokenizer(args.model, device="auto")
     print(f"Model loaded!")
 
     # Calculate start and end indices for this chunk
@@ -133,7 +125,7 @@ def main():
                 if (sample_idx, group_idx) in processed_keys:
                     continue
                 
-                request_output, elapsed_time = basic_inference(model, sampling_params, sample)
+                method_output = basic_inference(model, tokenizer, sample, B=B, G=G)
                 
                 result = {
                     "sample_idx": sample_idx,
@@ -142,8 +134,7 @@ def main():
                     "dataset": args.dataset,
                     "B": B,
                     "G": G,
-                    "method_output": serialize_request_output(request_output),
-                    "generation_time": elapsed_time,
+                    "method_output": method_output,
                     "sample": sample,
                 }
                 f.write(json.dumps(result) + '\n')

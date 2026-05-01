@@ -19,6 +19,11 @@ def _load_math500():
     return dataset
 
 
+def _load_math100():
+    dataset = _load_math500()
+    return dataset.shuffle(seed=42).select(range(100))
+
+
 def _load_gsm1k():
     return load_dataset("ScaleAI/gsm1k", split="test", cache_dir=CACHE_DIR)
 
@@ -66,6 +71,7 @@ def _load_gpqa_diamond():
 DATASET_REGISTRY: dict[str, Callable] = {
     "aime": _load_aime,
     "math500": _load_math500,
+    "math100": _load_math100,
     "gsm1k": _load_gsm1k,
     "gsm8k": _load_gsm8k,
     "gpqad": _load_gpqa_diamond,
