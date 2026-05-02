@@ -20,6 +20,7 @@ import datetime
 import signal
 import traceback
 import multiprocessing as mp
+from functools import partial
 from typing import Any
 
 import torch
@@ -49,6 +50,8 @@ def worker_fn(
     ready_event: mp.Event,
     G: int,
     B: int,
+    chunk_size: int = 32,
+    mem_threshold: float = 0.95,
 ):
     """
     Worker subprocess: loads model on assigned GPU, then loops consuming
@@ -94,6 +97,10 @@ def worker_fn(
             raise ValueError(f"Unknown gen strategy: '{gen_strategy_name}'. "
                              f"Available: {list(GPU_GENERATE_REGISTRY.keys())}")
         gen_fn = GPU_GENERATE_REGISTRY[gen_strategy_name]
+
+        # Bind extra hyperparameters for the memory-safe strategy
+        if gen_strategy_name == "pruned_kernel_safe":
+            gen_fn = partial(gen_fn, K=chunk_size, mem_threshold=mem_threshold)
 
         while True:
             # Blocking wait — 0% CPU usage while queue is empty.
@@ -278,6 +285,11 @@ def main():
                         help="Output JSONL filename (auto-named if absent)")
     parser.add_argument("--fast-resume", action="store_true",
                         help="Use cached batch results on resume (timing marked invalid)")
+    parser.add_argument("--chunk-size", "-K", type=int, default=32,
+                        help="Tokens per memory-check chunk (for pruned_kernel_safe strategy)")
+    parser.add_argument("--mem-threshold", type=float, default=0.95,
+                        help="GPU memory fraction (0-1) that triggers batch split "
+                             "(for pruned_kernel_safe strategy)")
 
     args = parser.parse_args()
 
@@ -301,14 +313,17 @@ def main():
     if args.output_file:
         log_path = os.path.join(output_dir, args.output_file)
     else:
-        log_path = os.path.join(
-            output_dir,
-            f"inference_{args.model}_{args.dataset}_{args.strategy}"
-            f"_gen{args.gen_strategy}"
-            f"_bg{args.batch_grouping}"
-            f"_G{args.group_size}_B{args.max_new_tokens}"
-            f"_gpus{args.num_gpus}.jsonl"
-        )
+        name_parts = [
+            f"inference_{args.model}_{args.dataset}_{args.strategy}",
+            f"gen{args.gen_strategy}",
+            f"bg{args.batch_grouping}",
+            f"G{args.group_size}_B{args.max_new_tokens}",
+            f"gpus{args.num_gpus}"
+        ]
+        if args.gen_strategy == "pruned_kernel_safe":
+            name_parts.append(f"K{args.chunk_size}_mem{args.mem_threshold}")
+            
+        log_path = os.path.join(output_dir, "_".join(name_parts) + ".jsonl")
 
     print(f"Output log: {log_path}", flush=True)
 
@@ -356,7 +371,8 @@ def main():
             target=worker_fn,
             args=(gpu_id, args.num_gpus, args.model, args.gen_strategy,
                   task_queue, result_queue, ready_event,
-                  args.group_size, args.max_new_tokens),
+                  args.group_size, args.max_new_tokens,
+                  args.chunk_size, args.mem_threshold),
             daemon=True,
         )
         p.start()
@@ -513,6 +529,9 @@ def main():
                 "timing_valid": timing_valid,
                 "timestamp": datetime.datetime.now().isoformat(),
             }
+            if args.gen_strategy == "pruned_kernel_safe":
+                epoch_summary["chunk_size"] = args.chunk_size
+                epoch_summary["mem_threshold"] = args.mem_threshold
             # Include model load time in epoch 0
             if epoch_idx == 0:
                 epoch_summary["model_load_time"] = model_load_time
