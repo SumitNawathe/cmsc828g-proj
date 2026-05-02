@@ -1,0 +1,9 @@
+mlp:
+NLL_logspace = 1.5531
+Wasserstein  = 2101.9328   best
+Tail_MAE     = 0.0948      best
+
+reasons:
+1. whether long rollouts are correctly identified
+2. whether the predicted distribution shape is close enough for batching
+3. whether tail/OOM risk is calibrated
