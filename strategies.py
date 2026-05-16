@@ -50,7 +50,7 @@ class BaselineStrategy(BatchingStrategy):
     No adaptation, no multi-prompt batching.
     """
 
-    def __init__(self, keys: list[int], G: int, bg: int = 1):
+    def __init__(self, keys: list[int], G: int, bg: int = 2):
         super().__init__(keys, G)
         self.bg = bg
 
@@ -84,12 +84,14 @@ class LogTSumStrategy(BatchingStrategy):
         self,
         keys: list[int],
         G: int,
+        bg: int = 2,
         mem_limit: int = 250000,
         alpha: float = 0.01,
         mc_nsamples: int = 10_000,
         init_seed: int = 42,
     ):
         super().__init__(keys, G)
+        self.bg = bg
         self.mem_limit = mem_limit
         self.alpha = alpha
         self.mc_nsamples = mc_nsamples
@@ -148,16 +150,23 @@ class LogTSumStrategy(BatchingStrategy):
 
     def get_ordering(self) -> list[list[int]]:
         if not self._has_data():
-            # Epoch 0 fallback: one prompt per batch
-            return [[k] for k in self.keys]
+            ans = []
+            b = []
+            for x in self.keys:
+                b.append(x)
+                if len(b) == self.bg:
+                    ans.append(b)
+                    b = []
+            if b:
+                ans.append(b)
+            return ans
 
-        # Sort by mean + 0.5*std of observed lengths (ascending = easiest first)
+        # Sort by mean of observed lengths (ascending = easiest first)
         means_and_keys = []
         for k in self.keys:
             if self.times[k]:
                 m = np.mean(self.times[k])
-                s = np.std(self.times[k])
-                means_and_keys.append((m + 0.5 * s, k))
+                means_and_keys.append((m, k))
             else:
                 means_and_keys.append((0.0, k))
         means_and_keys.sort()
@@ -200,10 +209,12 @@ class LogTMaxStrategy(BatchingStrategy):
         self,
         keys: list[int],
         G: int,
+        bg: int = 2,
         mem_limit: int = 250000,
         alpha: float = 0.001,
     ):
         super().__init__(keys, G)
+        self.bg = bg
         self.mem_limit = mem_limit
         self.alpha = alpha
 
@@ -250,16 +261,23 @@ class LogTMaxStrategy(BatchingStrategy):
 
     def get_ordering(self) -> list[list[int]]:
         if not self._has_data():
-            # Epoch 0 fallback: one prompt per batch
-            return [[k] for k in self.keys]
+            ans = []
+            b = []
+            for x in self.keys:
+                b.append(x)
+                if len(b) == self.bg:
+                    ans.append(b)
+                    b = []
+            if b:
+                ans.append(b)
+            return ans
 
-        # Sort by mean + 0.5*std of observed lengths (ascending = easiest first)
+        # Sort by mean of observed lengths (ascending = easiest first)
         means_and_keys = []
         for k in self.keys:
             if self.times[k]:
                 m = np.mean(self.times[k])
-                s = np.std(self.times[k])
-                means_and_keys.append((m + 0.5 * s, k))
+                means_and_keys.append((m, k))
             else:
                 means_and_keys.append((0.0, k))
         means_and_keys.sort()
